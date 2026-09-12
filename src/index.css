@@ -1,0 +1,153 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+/* manual dark mode via <html class="dark"> (set by ThemeToggle / early init) */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Playfair Display", Georgia, serif;
+
+  --color-paper: #faf7f0;
+  --color-parchment: #f1e9d9;
+  --color-parchment-deep: #e5dac2;
+  --color-ink: #241f1a;
+  --color-ink-soft: #4f463c;
+  --color-muted: #857a6a;
+  --color-brand: #9e1b1b;
+  --color-brand-dark: #7d1414;
+  --color-brand-soft: #f6e3e3;
+  --color-gold: #b98a2f;
+
+  /* neutral card/input surface — flips with theme */
+  --color-surface: #ffffff;
+  --color-surface-deep: #d6d3cd;
+}
+
+/* ── dark palette: same token names, night values ───────────────── */
+.dark {
+  --color-paper: #16130f;
+  --color-parchment: #201c16;
+  --color-parchment-deep: #38322a;
+  --color-ink: #ece5d8;
+  --color-ink-soft: #c8bfad;
+  --color-muted: #948a78;
+  --color-brand: #d43a3a;
+  --color-brand-dark: #e05252;
+  --color-brand-soft: #38191a;
+  --color-gold: #d1a04a;
+  --color-surface: #211d17;
+  --color-surface-deep: #4a443b;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  @apply bg-paper text-ink font-sans antialiased;
+}
+
+::selection {
+  background: var(--color-brand);
+  color: #fff;
+}
+
+.font-display {
+  font-family: var(--font-display);
+}
+
+/* thin elegant scrollbars for carousels */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* ── reader themes: independent of site dark mode ────────────────── */
+.reader-light {
+  --r-bg: #ffffff;
+  --r-text: #241f1a;
+  --r-muted: #857a6a;
+  --r-panel: #ffffff;
+  --r-btn: #faf7f0;
+  --r-accent: #9e1b1b;
+  --r-border: #e5dac2;
+  --r-row-hover: #f1e9d9;
+  --r-active-bg: rgb(158 27 27 / 0.14);
+}
+.reader-sepia {
+  --r-bg: #f6eed9;
+  --r-text: #43382a;
+  --r-muted: #8a7455;
+  --r-panel: #f1e6cb;
+  --r-btn: #fbf6ea;
+  --r-accent: #9e1b1b;
+  --r-border: #e0d1ae;
+  --r-row-hover: #ece0c2;
+  --r-active-bg: rgb(158 27 27 / 0.14);
+}
+.reader-dark {
+  --r-bg: #191713;
+  /* bright warm off-white — comfortable but clearly readable */
+  --r-text: #f0ead9;
+  --r-muted: #a89e8a;
+  --r-panel: #211d17;
+  --r-btn: #2d2721;
+  --r-accent: #f0c869;
+  --r-border: #38322a;
+  --r-row-hover: #262119;
+  --r-active-bg: rgb(240 200 105 / 0.16);
+}
+
+/* ── audio popup surface — follows the SITE light/dark mode ────────── */
+.audio-surface {
+  --r-bg: #ffffff;
+  --r-text: #241f1a;
+  --r-muted: #857a6a;
+  --r-panel: #faf7f0;
+  --r-btn: #f1e9d9;
+  --r-accent: #9e1b1b;
+  --r-border: #e5dac2;
+  --r-row-hover: #f1e9d9;
+  --r-active-bg: rgb(158 27 27 / 0.14);
+}
+.dark .audio-surface {
+  --r-bg: #1c1917;
+  --r-text: #f0ead9;
+  --r-muted: #a89e8a;
+  --r-panel: #211d17;
+  --r-btn: #2d2721;
+  --r-accent: #f0c869;
+  --r-border: #38322a;
+  --r-row-hover: #262119;
+  --r-active-bg: rgb(240 200 105 / 0.16);
+}
+
+/* mini-player pill popping back after the panel morphs shut */
+@keyframes pillIn {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.pill-pop {
+  animation: pillIn 0.18s ease-out both;
+}
+
+/* ── reading column widths (md/txt/epub) ─────────────────────────── */
+.reader-w-small {
+  --r-measure: 36rem;
+}
+.reader-w-medium {
+  --r-measure: 44rem;
+}
+.reader-w-large {
+  --r-measure: 56rem;
+}

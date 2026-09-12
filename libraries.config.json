@@ -1,0 +1,17 @@
+{
+  "libraries": [
+    {
+      "id": "arka",
+      "label": "Arka",
+      "path": "../arka",
+      "enabled": true
+    },
+    {
+      "id": "agim",
+      "label": "Agim",
+      "path": "../agim",
+      "url": null,
+      "enabled": false
+    }
+  ]
+}

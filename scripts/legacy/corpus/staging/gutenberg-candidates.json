@@ -1,0 +1,114 @@
+{
+  "minedAt": "2026-08-21T22:34:14.235Z",
+  "note": "Candidates only. Curators review -> merge into corpus/catalog.json (rights gate applies).",
+  "count": 3,
+  "albanianLanguage": 0,
+  "candidates": [
+    {
+      "gutenbergId": 32129,
+      "title": "Area Handbook for Albania",
+      "authors": [
+        {
+          "name": "Keefe, Eugene K.",
+          "born": 1922,
+          "died": 2005
+        },
+        {
+          "name": "Giloane, William",
+          "born": null,
+          "died": null
+        },
+        {
+          "name": "Moore, James M.",
+          "born": null,
+          "died": null
+        },
+        {
+          "name": "Peters, Stephen",
+          "born": null,
+          "died": null
+        },
+        {
+          "name": "White, Eston T.",
+          "born": null,
+          "died": null
+        },
+        {
+          "name": "Elpern, Sarah Jane",
+          "born": 1946,
+          "died": 2023
+        }
+      ],
+      "languages": [
+        "en"
+      ],
+      "subjects": [
+        "Albania"
+      ],
+      "copyright": false,
+      "formats": {},
+      "provenance": {
+        "source": "Project Gutenberg (via Gutendex)",
+        "sourceUrl": "https://www.gutenberg.org/ebooks/32129",
+        "licenseNote": "US public domain per Gutenberg; verify life+70 rule for EU/AL before publishing.",
+        "retrievedAt": "2026-08-21T22:34:14.234Z"
+      }
+    },
+    {
+      "gutenbergId": 39684,
+      "title": "Albania : $b A narrative of recent travel",
+      "authors": [
+        {
+          "name": "Knight, E. F. (Edward Frederick)",
+          "born": 1852,
+          "died": 1925
+        }
+      ],
+      "languages": [
+        "en"
+      ],
+      "subjects": [
+        "Albania -- Description and travel"
+      ],
+      "copyright": false,
+      "formats": {},
+      "provenance": {
+        "source": "Project Gutenberg (via Gutendex)",
+        "sourceUrl": "https://www.gutenberg.org/ebooks/39684",
+        "licenseNote": "US public domain per Gutenberg; verify life+70 rule for EU/AL before publishing.",
+        "retrievedAt": "2026-08-21T22:34:14.235Z"
+      }
+    },
+    {
+      "gutenbergId": 67626,
+      "title": "Twenty Years' Residence among the People of Turkey: Bulgarians, Greeks, Albanians, Turks, and Armenians",
+      "authors": [
+        {
+          "name": "Blunt, Fanny Janet Sandison",
+          "born": 1840,
+          "died": 1926
+        }
+      ],
+      "languages": [
+        "en"
+      ],
+      "subjects": [
+        "Balkan Peninsula -- Social life and customs",
+        "Eastern question (Balkan)",
+        "Land tenure -- Turkey",
+        "Turkey -- Population",
+        "Turkey -- Social life and customs",
+        "Women -- Education -- Turkey",
+        "Women -- Turkey"
+      ],
+      "copyright": false,
+      "formats": {},
+      "provenance": {
+        "source": "Project Gutenberg (via Gutendex)",
+        "sourceUrl": "https://www.gutenberg.org/ebooks/67626",
+        "licenseNote": "US public domain per Gutenberg; verify life+70 rule for EU/AL before publishing.",
+        "retrievedAt": "2026-08-21T22:34:14.235Z"
+      }
+    }
+  ]
+}

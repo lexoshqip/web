@@ -1,0 +1,19 @@
+{
+  "sources": [
+    {
+      "type": "article",
+      "title": "Letërsia e vjetër shqiptare",
+      "suggests": "e-vjeter"
+    },
+    {
+      "type": "article",
+      "title": "Lista e shkrimtarëve shqiptarë",
+      "suggests": null
+    },
+    {
+      "type": "category",
+      "title": "Kategoria:Shkrimtarë të realizmit socialist",
+      "suggests": "socialiste"
+    }
+  ]
+}
