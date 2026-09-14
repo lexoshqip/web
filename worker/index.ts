@@ -208,6 +208,7 @@ export default {
     const ALLOWED_ORIGINS = [
       "https://lexoshqip.org",
       "https://www.lexoshqip.org",
+      "https://web.wandering-field-9ca8.workers.dev",
       "http://localhost:5173",
       "http://localhost:4173",
     ];
