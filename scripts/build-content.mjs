@@ -34,12 +34,27 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import AdmZip from "adm-zip";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const WORKSPACE = path.resolve(ROOT, "..");
+
+/* Load .dev.vars into process.env for local builds */
+const devVarsPath = path.join(ROOT, ".dev.vars");
+if (fs.existsSync(devVarsPath)) {
+  for (const line of fs.readFileSync(devVarsPath, "utf8").split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const eq = trimmed.indexOf("=");
+    if (eq < 0) continue;
+    const key = trimmed.slice(0, eq).trim();
+    const val = trimmed.slice(eq + 1).trim();
+    if (!process.env[key]) process.env[key] = val;
+  }
+}
 
 /**
  * Fetch a remotely-deployed library by HTTP.
@@ -87,21 +102,192 @@ async function fetchRemoteLibrary(id, url) {
   return cacheDir;
 }
 
+/* ------------------------------------------------------------------ */
+/* S3 / Backblaze B2 helpers (build-time fetch for private buckets)    */
+/* ------------------------------------------------------------------ */
+const S3_ACCESS_KEY = process.env.S3_ACCESS_KEY_ID ?? "";
+const S3_SECRET_KEY = process.env.S3_SECRET_ACCESS_KEY ?? "";
+
+function hmac(key, data) {
+  return crypto.createHmac("sha256", key).update(data).digest();
+}
+
+function sha256(data) {
+  return crypto.createHash("sha256").update(data).digest("hex");
+}
+
+function s3BaseUrl(endpoint, bucket) {
+  const host = endpoint.replace(/^https?:\/\//, "").replace(/\/+$/, "");
+  return `https://${bucket}.${host}`;
+}
+
+function s3Sign({ method, bucket, key, endpoint, region, date, query = "" }) {
+  const host = `${bucket}.${endpoint.replace(/^https?:\/\//, "").replace(/\/+$/, "")}`;
+  const isoDate = date.toISOString().replace(/[:-]|\.\d{3}/g, "");
+  const dateStamp = isoDate.slice(0, 8);
+  const credentialScope = `${dateStamp}/${region}/s3/aws4_request`;
+  const canonicalUri = key ? `/${encodeURIComponent(key).replace(/%2F/g, "/")}` : "/";
+  const payloadHash = "UNSIGNED-PAYLOAD";
+
+  const headers = {
+    host,
+    "x-amz-content-sha256": payloadHash,
+    "x-amz-date": isoDate,
+  };
+  const signedHeaderKeys = Object.keys(headers).sort();
+  const canonicalHeaders = signedHeaderKeys.map((k) => `${k}:${headers[k]}\n`).join("");
+  const signedHeaders = signedHeaderKeys.join(";");
+
+  const canonicalRequest = [
+    method, canonicalUri, query, canonicalHeaders, signedHeaders, payloadHash,
+  ].join("\n");
+
+  const stringToSign = [
+    "AWS4-HMAC-SHA256", isoDate, credentialScope, sha256(canonicalRequest),
+  ].join("\n");
+
+  const kDate = hmac(`AWS4${S3_SECRET_KEY}`, dateStamp);
+  const kRegion = hmac(kDate, region);
+  const kService = hmac(kRegion, "s3");
+  const kSigning = hmac(kService, "aws4_request");
+  const signature = crypto.createHmac("sha256", kSigning).update(stringToSign).digest("hex");
+
+  return {
+    authorization: `AWS4-HMAC-SHA256 Credential=${S3_ACCESS_KEY}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`,
+    ...headers,
+  };
+}
+
+async function s3GetObject(bucket, key, endpoint, region) {
+  const date = new Date();
+  const url = `${s3BaseUrl(endpoint, bucket)}/${encodeURIComponent(key).replace(/%2F/g, "/")}`;
+  const auth = s3Sign({ method: "GET", bucket, key, endpoint, region, date });
+  const res = await fetch(url, { headers: auth });
+  if (!res.ok) throw new Error(`S3 GET ${key}: HTTP ${res.status}`);
+  return res;
+}
+
+async function s3ListObjects(bucket, prefix, endpoint, region) {
+  const keys = [];
+  let continuationToken = "";
+  do {
+    const date = new Date();
+    const queryParams = [`prefix=${encodeURIComponent(prefix)}`, "list-type=2"];
+    if (continuationToken) queryParams.push(`continuation-token=${encodeURIComponent(continuationToken)}`);
+    queryParams.sort();
+    const queryString = queryParams.join("&");
+    const canonicalQueryString = queryParams.map((p) => {
+      const [k, v] = p.split("=");
+      return `${encodeURIComponent(decodeURIComponent(k))}=${encodeURIComponent(decodeURIComponent(v ?? ""))}`;
+    }).sort().join("&");
+
+    const auth = s3Sign({
+      method: "GET", bucket, key: "", endpoint, region, date, query: canonicalQueryString,
+    });
+    const url = `${s3BaseUrl(endpoint, bucket)}/?${queryString}`;
+    const res = await fetch(url, { headers: auth });
+    if (!res.ok) throw new Error(`S3 LIST ${prefix}: HTTP ${res.status}`);
+    const xml = await res.text();
+    const keyMatches = xml.match(/<Key>(.*?)<\/Key>/g) ?? [];
+    for (const m of keyMatches) keys.push(m.replace(/<\/?Key>/g, ""));
+    const contMatch = xml.match(/<NextContinuationToken>(.*?)<\/NextContinuationToken>/);
+    continuationToken = contMatch ? contMatch[1] : "";
+  } while (continuationToken);
+  return keys;
+}
+
+async function fetchS3Library(id, s3Config) {
+  const { bucket, endpoint, region } = s3Config;
+  const cacheDir = path.join(ROOT, ".cache", "libraries", id);
+  fs.mkdirSync(cacheDir, { recursive: true });
+
+  if (!S3_ACCESS_KEY || !S3_SECRET_KEY) {
+    console.warn(`[libraries] S3 credentials not set — skipping ${id}`);
+    return fs.readdirSync(cacheDir).length ? cacheDir : null;
+  }
+
+  console.log(`[libraries] fetching ${id} from S3: ${bucket}`);
+
+  try {
+    // Step 1: Download catalog.json + library.json
+    const [catalogRes, libMetaRes] = await Promise.all([
+      s3GetObject(bucket, "catalog.json", endpoint, region),
+      s3GetObject(bucket, "library.json", endpoint, region).catch(() => null),
+    ]);
+    const catalog = await catalogRes.json();
+    fs.writeFileSync(path.join(cacheDir, "catalog.json"), JSON.stringify(catalog, null, 2));
+    if (libMetaRes && libMetaRes.ok) {
+      const libMeta = await libMetaRes.json();
+      fs.writeFileSync(path.join(cacheDir, "library.json"), JSON.stringify(libMeta, null, 2));
+    }
+    const bookCount = (catalog.authors ?? []).reduce((n, a) => n + (a.books ?? []).length, 0);
+    console.log(`[libraries] ${id}: ${(catalog.authors ?? []).length} authors, ${bookCount} books`);
+
+    // Step 2: Download images (covers, portraits, banners) via S3 ListObjects
+    const IMAGE_EXTS = new Set([".jpg", ".jpeg", ".png", ".webp", ".svg"]);
+    const listing = await s3ListObjects(bucket, "", endpoint, region);
+    const imageKeys = listing.filter((k) => {
+      const ext = path.extname(k).toLowerCase();
+      return IMAGE_EXTS.has(ext);
+    });
+
+    if (imageKeys.length) {
+      const CONCURRENCY = 10;
+      let downloaded = 0;
+      const total = imageKeys.length;
+      for (let i = 0; i < imageKeys.length; i += CONCURRENCY) {
+        const batch = imageKeys.slice(i, i + CONCURRENCY);
+        await Promise.all(batch.map(async (key) => {
+          const dest = path.join(cacheDir, key);
+          if (fs.existsSync(dest)) { downloaded++; return; }
+          fs.mkdirSync(path.dirname(dest), { recursive: true });
+          try {
+            const imgRes = await s3GetObject(bucket, key, endpoint, region);
+            const buffer = Buffer.from(await imgRes.arrayBuffer());
+            fs.writeFileSync(dest, buffer);
+            downloaded++;
+          } catch (err) {
+            console.warn(`[libraries] failed to fetch ${key}: ${err.message}`);
+          }
+        }));
+        process.stdout.write(`\r[libraries] ${id}: images ${downloaded}/${total}`);
+      }
+      process.stdout.write("\n");
+    }
+
+    return cacheDir;
+  } catch (err) {
+    console.warn(`[libraries] S3 fetch failed for ${id}: ${err.message}`);
+    return fs.existsSync(cacheDir) && fs.readdirSync(cacheDir).length ? cacheDir : null;
+  }
+}
+
 async function resolveLibraries() {
   // 1. Env var override (CI/CD or one-off runs)
   if (process.env.LEXOSHQIP_LIBRARY) {
-    return process.env.LEXOSHQIP_LIBRARY
-      .split(/[,:]/).map((p) => p.trim()).filter(Boolean)
-      .map((p) => path.resolve(WORKSPACE, p));
+    return {
+      paths: process.env.LEXOSHQIP_LIBRARY
+        .split(/[,:]/).map((p) => p.trim()).filter(Boolean)
+        .map((p) => path.resolve(WORKSPACE, p)),
+      s3Configs: new Map(),
+    };
   }
   // 2. libraries.config.json — the preferred way
   const configPath = path.join(ROOT, "libraries.config.json");
   if (fs.existsSync(configPath)) {
     const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
     const paths = [];
+    const s3Configs = new Map();
     for (const lib of config.libraries) {
       if (!lib.enabled) continue;
-      if (lib.url) {
+      if (lib.s3) {
+        // S3-backed library — fetch via S3 API into local cache
+        const p = await fetchS3Library(lib.id, lib.s3);
+        if (p) {
+          paths.push(p);
+          s3Configs.set(p, lib.s3);
+        }
+      } else if (lib.url) {
         // Remote deployed library — fetch via HTTP into local cache
         const p = await fetchRemoteLibrary(lib.id, lib.url);
         if (p) paths.push(p);
@@ -109,20 +295,38 @@ async function resolveLibraries() {
         paths.push(path.resolve(WORKSPACE, lib.path));
       }
     }
-    return paths;
+    return { paths, s3Configs };
   }
   // 3. Fallback: auto-discover all *Library sibling folders
-  return fs.readdirSync(WORKSPACE)
-    .filter((n) => {
-      try { return n.endsWith("Library") && fs.statSync(path.join(WORKSPACE, n)).isDirectory(); }
-      catch { return false; }
-    })
-    .sort()
-    .map((n) => path.join(WORKSPACE, n));
+  return {
+    paths: fs.readdirSync(WORKSPACE)
+      .filter((n) => {
+        try { return n.endsWith("Library") && fs.statSync(path.join(WORKSPACE, n)).isDirectory(); }
+        catch { return false; }
+      })
+      .sort()
+      .map((n) => path.join(WORKSPACE, n)),
+    s3Configs: new Map(),
+  };
 }
 
-const LIBRARIES = (await resolveLibraries())
+const _resolved = await resolveLibraries();
+const LIBRARIES = _resolved.paths
   .filter((p, i, a) => fs.existsSync(p) && a.indexOf(p) === i);
+const S3_CONFIGS = _resolved.s3Configs;
+
+/* Local library repo paths (for finding split volumes etc.) */
+const LOCAL_LIB_PATHS = [];
+const configPath = path.join(ROOT, "libraries.config.json");
+if (fs.existsSync(configPath)) {
+  const cfg = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  for (const lib of cfg.libraries) {
+    if (lib.path) {
+      const p = path.resolve(ROOT, lib.path);
+      if (fs.existsSync(p)) LOCAL_LIB_PATHS.push(p);
+    }
+  }
+}
 const PUBLIC = path.join(ROOT, "public");
 const API_OUT = path.join(PUBLIC, "api");
 const CONTENT_OUT = path.join(PUBLIC, "content");
@@ -339,29 +543,63 @@ const seenAuthor = new Set();
 const seenBook = new Set();
 
 for (const root of LIBRARIES) {
-  const epochsFile = path.join(root, "epochs.json");
-  for (const e of fs.existsSync(epochsFile) ? readJson(epochsFile, "epochs.json") : []) {
-    if (seenEpoch.has(e.id)) continue;
-    seenEpoch.add(e.id);
-    catalog.epochs.push(e);
-  }
+  const catalogFile = path.join(root, "catalog.json");
+  const hasCatalog = fs.existsSync(catalogFile);
 
-  const collectionsFile = path.join(root, "collections.json");
-  for (const c of fs.existsSync(collectionsFile) ? readJson(collectionsFile, "collections.json") : []) {
-    if (seenCollection.has(c.id)) continue;
-    seenCollection.add(c.id);
-    catalog.collections.push(c);
-  }
+  if (hasCatalog) {
+    /* catalog.json mode — single file with all data (S3-optimized) */
+    const libCatalog = readJson(catalogFile, "catalog.json");
+    for (const e of libCatalog.epochs ?? []) {
+      if (seenEpoch.has(e.id)) continue;
+      seenEpoch.add(e.id);
+      catalog.epochs.push(e);
+    }
+    for (const c of libCatalog.collections ?? []) {
+      if (seenCollection.has(c.id)) continue;
+      seenCollection.add(c.id);
+      catalog.collections.push(c);
+    }
+    for (const a of libCatalog.authors ?? []) {
+      if (!seenAuthor.has(a.id)) {
+        seenAuthor.add(a.id);
+        catalog.authors.push({ ...a, _dir: path.join(root, "authors", a.id), _libraryId: libraryMetaMap.get(root)?.id });
+      }
+      const booksDir = path.join(root, "authors", a.id, "books");
+      for (const b of a.books ?? []) {
+        const bid = b.id?.includes("--") ? b.id.split("--")[1] : b.id;
+        const key = `${a.id}/${bid}`;
+        if (seenBook.has(key)) continue;
+        seenBook.add(key);
+        const meta = { ...b, id: `${a.id}--${bid}`, authorId: a.id, _dir: path.join(root, "authors", a.id, "books", bid), _libraryId: libraryMetaMap.get(root)?.id };
+        meta.rightsStatus = meta.rights?.verification === "pending" ? "pending" : "verified";
+        catalog.books.push(meta);
+      }
+    }
+  } else {
+    /* Traditional mode — individual JSON files */
+    const epochsFile = path.join(root, "epochs.json");
+    for (const e of fs.existsSync(epochsFile) ? readJson(epochsFile, "epochs.json") : []) {
+      if (seenEpoch.has(e.id)) continue;
+      seenEpoch.add(e.id);
+      catalog.epochs.push(e);
+    }
 
-  const authorsRoot = path.join(root, "authors");
-  if (!fs.existsSync(authorsRoot)) continue;
-  for (const aid of fs.readdirSync(authorsRoot).sort()) {
-    const adir = path.join(authorsRoot, aid);
-    if (aid.startsWith(".") || !fs.statSync(adir).isDirectory()) continue;
-    if (!fs.existsSync(path.join(adir, "author.json")))
-      fail(`author folder "${aid}" is missing author.json`);
-    /* author record comes from the first root that has it; its photo too */
-    if (!seenAuthor.has(aid)) {
+    const collectionsFile = path.join(root, "collections.json");
+    for (const c of fs.existsSync(collectionsFile) ? readJson(collectionsFile, "collections.json") : []) {
+      if (seenCollection.has(c.id)) continue;
+      seenCollection.add(c.id);
+      catalog.collections.push(c);
+    }
+
+    const authorsRoot = path.join(root, "authors");
+    if (!fs.existsSync(authorsRoot)) continue;
+    for (const aid of fs.readdirSync(authorsRoot).sort()) {
+      const adir = path.join(authorsRoot, aid);
+      if (aid.startsWith(".") || !fs.statSync(adir).isDirectory()) continue;
+      if (!fs.existsSync(path.join(adir, "author.json")))
+        fail(`author folder "${aid}" is missing author.json`);
+      /* author record comes from the first root that has it; its photo too */
+      if (!seenAuthor.has(aid)) {
       seenAuthor.add(aid);
       catalog.authors.push({ ...readJson(path.join(adir, "author.json"), `authors/${aid}`), id: aid, _dir: adir, _libraryId: libraryMetaMap.get(root)?.id });
     }
@@ -382,6 +620,7 @@ for (const root of LIBRARIES) {
       /* legacy field → derived from tiered rights */
       meta.rightsStatus = meta.rights?.verification === "pending" ? "pending" : "verified";
       catalog.books.push({ ...meta, id: `${aid}--${bid}`, authorId: aid, _dir: bdir, _libraryId: libraryMetaMap.get(root)?.id });
+    }
     }
   }
 }
@@ -456,9 +695,20 @@ const verifiedBooks = catalog.books.filter(
 );
 for (const b of pending) warnings.push(`excluded (rightsStatus=${b.rightsStatus}, has text): "${b.id}"`);
 
+const s3LibraryIds = new Set();
+const proxyS3ByLibId = new Map();
+for (const [root, s3] of S3_CONFIGS.entries()) {
+  const meta = libraryMetaMap.get(root);
+  if (meta) {
+    s3LibraryIds.add(meta.id);
+    if (s3.proxy) proxyS3ByLibId.set(meta.id, s3);
+  }
+}
+
 for (const b of verifiedBooks) {
   const bdir = b._dir;
   if (b.availability === "metadata-only") continue;
+  if (s3LibraryIds.has(b._libraryId)) continue; // S3 content served at runtime
   /* scan-first workflow: a full-text master is only required when nothing
      else provides content (book.epub/pdf/mp3 or explicit files[]) */
   const textFile = path.join(bdir, b.accessType === "trial" ? "excerpt.md" : "text.md");
@@ -523,6 +773,10 @@ const librariesList = LIBRARIES.map((root) => {
     ...(m.links?.length ? { links: m.links } : {}),
     bookCount: libBookCount.get(m.id) ?? 0,
     authorCount: libAuthorCount.get(m.id) ?? 0,
+    ...((() => {
+      const s3 = S3_CONFIGS.get(root);
+      return s3?.proxy ? { s3Proxy: { bucket: s3.bucket, prefix: "/api/s3-proxy" } } : {};
+    })()),
   };
 });
 fs.writeFileSync(
@@ -752,23 +1006,33 @@ function makeWav(seconds = 40) {
   return Buffer.concat([header, data]);
 }
 
+/* Build S3 proxy lookup: libraryId → s3 config (for S3-aware book processing) */
+
 for (const book of verifiedBooks) {
   const author = authorById.get(book.authorId);
   const bdir = path.join(CONTENT_OUT, "books", book.id);
   const srcDir = book._dir; /* Library/authors/<aid>/books/<bid>/ */
   fs.mkdirSync(bdir, { recursive: true });
 
+  const isS3Proxy = proxyS3ByLibId.has(book._libraryId);
+
   /* covers — use uploaded image if present, else generate SVG */
     const COVER_EXTS = [".png", ".jpg", ".jpeg", ".webp"];
+    let coverFile = "cover.svg";
+
+    /* For S3-backed books, _dir points to cache — covers are already there */
     const realCover = COVER_EXTS
       .map((ext) => path.join(srcDir, `cover${ext}`))
       .find((p) => fs.existsSync(p));
-    let coverFile = "cover.svg";
+
     if (realCover) {
       const destExt = path.extname(realCover).toLowerCase();
       fs.copyFileSync(realCover, path.join(bdir, `cover${destExt}`));
       coverFile = `cover${destExt}`;
+    } else if (!isS3Proxy) {
+      fs.writeFileSync(path.join(bdir, "cover.svg"), coverSvg(book, author.name));
     } else {
+      /* S3 book with no cover image — generate fallback SVG */
       fs.writeFileSync(path.join(bdir, "cover.svg"), coverSvg(book, author.name));
     }
 
@@ -864,19 +1128,53 @@ for (const book of verifiedBooks) {
         console.log(`  ⚠ ${book.id}: M4B export skipped (${String(e.message).split("\n")[0]})`);
       }
     } else if (fs.existsSync(path.join(srcDir, "book.mp3"))) {
-      const name = isTrial ? "file-excerpt.mp3" : "file.mp3";
+      const name = isTrial ? "file-excerpt.mp3" : "book.mp3";
       fs.copyFileSync(path.join(srcDir, "book.mp3"), path.join(bdir, name));
       formats.audio = `/content/books/${book.id}/${name}`;
     }
 
-    /* curated epub/pdf artifacts (book.epub / book.pdf) — published as-is */
+    /* curated epub/pdf artifacts (book.epub / book.pdf / book_vol*.pdf) — published as-is */
     for (const ed of ["pdf", "epub"]) {
       const uploadedPath = path.join(srcDir, `book.${ed}`);
-      if (!fs.existsSync(uploadedPath)) continue;
-      const name = isTrial ? `file-excerpt.${ed}` : `file.${ed}`;
-      fs.copyFileSync(uploadedPath, path.join(bdir, name));
-      formats[ed] = `/content/books/${book.id}/${name}`;
+      if (fs.existsSync(uploadedPath)) {
+        const name = isTrial ? `file-excerpt.${ed}` : `book.${ed}`;
+        fs.copyFileSync(uploadedPath, path.join(bdir, name));
+        formats[ed] = `/content/books/${book.id}/${name}`;
+      } else if (ed === "pdf") {
+        /* Multi-volume: book_vol1.pdf, book_vol2.pdf, etc. */
+        /* Search both cache dir and local library repos */
+        const bid = book.id?.split("--")[1];
+        const searchDirs = [srcDir];
+        for (const lp of LOCAL_LIB_PATHS) {
+          const localBookDir = path.join(lp, "authors", book.authorId, "books", bid);
+          if (fs.existsSync(localBookDir) && localBookDir !== srcDir) {
+            searchDirs.push(localBookDir);
+          }
+        }
+        let volFiles = [];
+        let volSrcDir = srcDir;
+        for (const d of searchDirs) {
+          if (!fs.existsSync(d)) continue;
+          const found = fs.readdirSync(d).filter((f) => /^book_vol\d+\.pdf$/i.test(f));
+          if (found.length > volFiles.length) { volFiles = found; volSrcDir = d; }
+        }
+        volFiles.sort();
+        if (volFiles.length > 0) {
+          const volumes = [];
+          for (let i = 0; i < volFiles.length; i++) {
+            const vname = `vol${i + 1}.pdf`;
+            fs.copyFileSync(path.join(volSrcDir, volFiles[i]), path.join(bdir, vname));
+            volumes.push({
+              id: `vol${i + 1}`,
+              label: `Volumi ${i + 1}`,
+              url: `/content/books/${book.id}/${vname}`,
+            });
+          }
+          formats.volumes = volumes;
+        }
+      }
     }
+
   }
 
   /* ── variant editions, opt-in by filename convention:
@@ -1294,6 +1592,86 @@ console.log(`epochs:   ${catalog.epochs.length}`);
 console.log(`authors:  ${catalog.authors.length}`);
 console.log(`books:    ${verifiedBooks.length} published (+${pending.length} withheld)`);
 console.log(`formats:  ${[...audioFlags.values()].filter(Boolean).length} audiobooks · ${verifiedBooks.length} texts published from masters`);
+
+/* ── S3 proxy URL rewriting ────────────────────────────────────────
+   For libraries with s3.proxy=true, rewrite all /content/… URLs in the
+   generated JSON to go through /api/s3-proxy/{bucket}/… so the Worker
+   handles S3 authentication at runtime. */
+if (proxyS3ByLibId.size) {
+  // Build lookup: book/author ID → their library's S3 config
+  const proxyS3ByItemId = new Map();
+  for (const b of verifiedBooks) {
+    const s3 = proxyS3ByLibId.get(b._libraryId);
+    if (s3) proxyS3ByItemId.set(b.id, s3);
+  }
+  for (const a of catalog.authors) {
+    const s3 = proxyS3ByLibId.get(a._libraryId);
+    if (s3) proxyS3ByItemId.set(a.id, s3);
+  }
+
+  const PROXY_EXTS = new Set([".epub", ".pdf", ".mp3", ".m4a", ".wav", ".zip", ".ogg", ".flac"]);
+  const rewriteUrl = (url, itemId) => {
+    if (typeof url !== "string" || !url.startsWith("/content/")) return url;
+    // Only proxy large binaries — images are cached locally
+    const ext = url.split("?")[0].split(".").pop()?.toLowerCase();
+    if (ext && !PROXY_EXTS.has(`.${ext}`)) return url;
+    // If we know which item this belongs to, use its library's bucket
+    const s3 = itemId ? proxyS3ByItemId.get(itemId) : null;
+    const bucket = s3?.bucket ?? [...proxyS3ByLibId.values()][0]?.bucket;
+    if (!bucket) return url;
+    // Transform build path to S3 key: books/{author}--{book}/file.pdf → authors/{author}/books/{book}/file.pdf
+    let s3Path = url;
+    const bookMatch = url.match(/^\/content\/books\/([^/]+)--([^/]+)\/([^/]+)$/);
+    if (bookMatch) {
+      const [, authorId, bookSlug, fileName] = bookMatch;
+      s3Path = `/content/authors/${authorId}/books/${bookSlug}/${fileName}`;
+    }
+    return `/api/s3-proxy/${encodeURIComponent(bucket)}${s3Path}`;
+  };
+  const rewriteObj = (obj, itemId) => {
+    if (!obj || typeof obj !== "object") return obj;
+    for (const [k, v] of Object.entries(obj)) {
+      if (typeof v === "string" && v.startsWith("/content/")) {
+        obj[k] = rewriteUrl(v, itemId);
+      } else if (Array.isArray(v)) {
+        v.forEach((item, i) => {
+          if (typeof item === "string" && item.startsWith("/content/")) {
+            v[i] = rewriteUrl(item, itemId);
+          } else if (item && typeof item === "object") {
+            rewriteObj(item, itemId);
+          }
+        });
+      } else if (v && typeof v === "object") {
+        rewriteObj(v, itemId);
+      }
+    }
+  };
+
+  let rewriteCount = 0;
+  const apiFiles = fs.readdirSync(API_OUT, { recursive: true })
+    .filter((f) => f.endsWith(".json"));
+  for (const relPath of apiFiles) {
+    const absPath = path.join(API_OUT, relPath);
+    try {
+      const raw = fs.readFileSync(absPath, "utf8");
+      const data = JSON.parse(raw);
+      const before = JSON.stringify(data);
+      // Extract item ID from filename (e.g., "gjon-buzuku--meshtari.json" → "gjon-buzuku--meshtari")
+      const itemId = path.basename(relPath, ".json");
+      rewriteObj(data, itemId);
+      if (JSON.stringify(data) !== before) {
+        fs.writeFileSync(absPath, JSON.stringify(data, null, 2));
+        rewriteCount++;
+      }
+    } catch { /* skip malformed */ }
+  }
+  if (rewriteCount) {
+    console.log(`s3-proxy: rewrote content URLs in ${rewriteCount} API files`);
+    for (const [libId, s3] of proxyS3ByLibId.entries())
+      console.log(`  → ${libId}: /api/s3-proxy/${encodeURIComponent(s3.bucket)}/content/…`);
+  }
+}
+
 if (warnings.length) {
   console.log("warnings:");
   for (const w of warnings) console.log(`  ⚠ ${w}`);

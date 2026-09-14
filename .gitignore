@@ -5,11 +5,13 @@ node_modules/
 dist/
 public/api/
 public/content/
+.cache/
 
 # Environment variables
 .env
 .env.local
 .env.*.local
+.dev.vars
 
 # OS files
 .DS_Store

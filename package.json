@@ -7,10 +7,13 @@
   "scripts": {
     "dev": "npm run build:content && vite --host 0.0.0.0",
     "build": "npm run build:content && vite build",
-    "build:content": "LEXOSHQIP_LIBRARY=arka:agim:lira node scripts/build-content.mjs",
+    "build:content": "node scripts/build-content.mjs",
+    "generate:catalog": "node scripts/generate-catalog.mjs",
     "preview": "vite preview --host 0.0.0.0",
     "typecheck": "tsc --noEmit -p tsconfig.app.json",
-    "smoke": "node scripts/render-smoke.mjs / Letërsia shqipe,Të gjitha epokat,Bota e Fëmijëve"
+    "smoke": "node scripts/render-smoke.mjs / Letërsia shqipe,Të gjitha epokat,Bota e Fëmijëve",
+    "worker:dev": "wrangler dev",
+    "worker:deploy": "wrangler deploy"
   },
   "dependencies": {
     "adm-zip": "^0.6.0",
@@ -37,6 +40,7 @@
     "jsdom": "^29.1.1",
     "tailwindcss": "^4.1.11",
     "typescript": "~5.8.3",
-    "vite": "^7.0.0"
+    "vite": "^7.0.0",
+    "wrangler": "^3.0.0"
   }
 }
