@@ -1444,6 +1444,28 @@ for (const book of verifiedBooks) {
   );
 }
 
+/* S3-proxy libraries: book content (pdf/epub/md/audio/zips/covers aside)
+   is served at runtime from R2 via /api/s3-proxy/… — don't ship it as
+   static assets. Keeps dist small and avoids Workers's 25 MiB per-asset
+   upload limit. Only images (covers) remain. */
+const KEEP_BOOK_IMAGE = /\.(jpe?g|png|svg|webp)$/i;
+function stripBookContent(dir) {
+  if (!fs.existsSync(dir)) return;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      stripBookContent(full);
+      if (fs.readdirSync(full).length === 0) fs.rmdirSync(full);
+    } else if (!KEEP_BOOK_IMAGE.test(entry.name)) {
+      fs.rmSync(full);
+    }
+  }
+}
+for (const b of verifiedBooks) {
+  if (!proxyS3ByLibId.has(b._libraryId)) continue;
+  stripBookContent(path.join(CONTENT_OUT, "books", b.id));
+}
+
 /* light index */
 const authorIndex = new Map(
   catalog.authors.map((a) => [

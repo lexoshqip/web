@@ -19,6 +19,7 @@ interface Env {
   S3_ACCESS_KEY_ID: string;
   S3_SECRET_ACCESS_KEY: string;
   S3_REGION?: string;
+  ASSETS: any;
 }
 
 // bucket name → { endpoint, region } mapping
@@ -232,6 +233,8 @@ export default {
       return handleProxy(request, bucket, s3Key, env);
     }
 
-    return new Response("Not Found", { status: 404 });
+    // Serve the static site (dist/) for everything else
+    // not_found_handling = single-page-application returns index.html for SPA routes
+    return env.ASSETS.fetch(request);
   },
 };
