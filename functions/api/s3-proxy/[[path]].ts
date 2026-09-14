@@ -6,20 +6,20 @@ interface Env {
 
 const BUCKET_CONFIG: Record<string, { endpoint: string; region: string }> = {
   "lexoshqip-arka": {
-    endpoint: "s3.us-east-005.backblazeb2.com",
-    region: "us-east-005",
+    endpoint: "d21ad56e2547c39c7d5d979ded3f39a5.r2.cloudflarestorage.com",
+    region: "auto",
   },
   "lexoshqip-agim": {
-    endpoint: "s3.us-east-005.backblazeb2.com",
-    region: "us-east-005",
+    endpoint: "d21ad56e2547c39c7d5d979ded3f39a5.r2.cloudflarestorage.com",
+    region: "auto",
   },
   "lexoshqip-lira": {
-    endpoint: "s3.us-east-005.backblazeb2.com",
-    region: "us-east-005",
+    endpoint: "d21ad56e2547c39c7d5d979ded3f39a5.r2.cloudflarestorage.com",
+    region: "auto",
   },
 };
 
-const DEFAULT_REGION = "us-west-004";
+const DEFAULT_REGION = "auto";
 
 const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -115,6 +115,26 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
   if (request.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: CORS_HEADERS });
+  }
+
+  const ALLOWED_ORIGINS = [
+    "https://lexoshqip.org",
+    "https://www.lexoshqip.org",
+    "http://localhost:5173",
+    "http://localhost:4173",
+  ];
+
+  const origin = request.headers.get("Origin");
+  const referer = request.headers.get("Referer");
+  const refSource = origin || referer;
+  if (refSource) {
+    const allowed = ALLOWED_ORIGINS.some((o) => refSource.startsWith(o));
+    if (!allowed) {
+      return new Response(
+        JSON.stringify({ error: "Forbidden" }),
+        { status: 403, headers: { "Content-Type": "application/json", ...CORS_HEADERS } },
+      );
+    }
   }
 
   const url = new URL(request.url);

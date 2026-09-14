@@ -1609,7 +1609,7 @@ if (proxyS3ByLibId.size) {
     if (s3) proxyS3ByItemId.set(a.id, s3);
   }
 
-  const PROXY_EXTS = new Set([".epub", ".pdf", ".mp3", ".m4a", ".wav", ".zip", ".ogg", ".flac"]);
+  const PROXY_EXTS = new Set([".md", ".epub", ".pdf", ".mp3", ".m4a", ".wav", ".zip", ".ogg", ".flac"]);
   const rewriteUrl = (url, itemId) => {
     if (typeof url !== "string" || !url.startsWith("/content/")) return url;
     // Only proxy large binaries — images are cached locally

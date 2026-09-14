@@ -25,20 +25,20 @@ interface Env {
 // Add your Backblaze B2 buckets here (one per library)
 const BUCKET_CONFIG: Record<string, { endpoint: string; region: string }> = {
   "lexoshqip-arka": {
-    endpoint: "s3.us-east-005.backblazeb2.com",
-    region: "us-east-005",
+    endpoint: "d21ad56e2547c39c7d5d979ded3f39a5.r2.cloudflarestorage.com",
+    region: "auto",
   },
   "lexoshqip-agim": {
-    endpoint: "s3.us-east-005.backblazeb2.com",
-    region: "us-east-005",
+    endpoint: "d21ad56e2547c39c7d5d979ded3f39a5.r2.cloudflarestorage.com",
+    region: "auto",
   },
   "lexoshqip-lira": {
-    endpoint: "s3.us-east-005.backblazeb2.com",
-    region: "us-east-005",
+    endpoint: "d21ad56e2547c39c7d5d979ded3f39a5.r2.cloudflarestorage.com",
+    region: "auto",
   },
 };
 
-const DEFAULT_REGION = "us-west-004";
+const DEFAULT_REGION = "auto";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -201,6 +201,27 @@ export default {
     // Handle CORS preflight
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: CORS_HEADERS });
+    }
+
+    // Hotlink protection: only allow requests from our domains
+    const ALLOWED_ORIGINS = [
+      "https://lexoshqip.org",
+      "https://www.lexoshqip.org",
+      "http://localhost:5173",
+      "http://localhost:4173",
+    ];
+
+    const origin = request.headers.get("Origin");
+    const referer = request.headers.get("Referer");
+    const refSource = origin || referer;
+    if (refSource) {
+      const allowed = ALLOWED_ORIGINS.some((o) => refSource.startsWith(o));
+      if (!allowed) {
+        return new Response(
+          JSON.stringify({ error: "Forbidden" }),
+          { status: 403, headers: { "Content-Type": "application/json", ...CORS_HEADERS } },
+        );
+      }
     }
 
     // Route: /api/s3-proxy/:bucket/* → S3 GET

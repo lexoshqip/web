@@ -84,9 +84,9 @@ function s3ProxyPlugin(): Plugin {
 
   // Bucket config — mirror the Worker's BUCKET_CONFIG (one per library)
   const BUCKETS: Record<string, { endpoint: string; region: string }> = {
-    "lexoshqip-arka": { endpoint: "s3.us-east-005.backblazeb2.com", region: "us-east-005" },
-    "lexoshqip-agim": { endpoint: "s3.us-east-005.backblazeb2.com", region: "us-east-005" },
-    "lexoshqip-lira": { endpoint: "s3.us-east-005.backblazeb2.com", region: "us-east-005" },
+    "lexoshqip-arka": { endpoint: "d21ad56e2547c39c7d5d979ded3f39a5.r2.cloudflarestorage.com", region: "auto" },
+    "lexoshqip-agim": { endpoint: "d21ad56e2547c39c7d5d979ded3f39a5.r2.cloudflarestorage.com", region: "auto" },
+    "lexoshqip-lira": { endpoint: "d21ad56e2547c39c7d5d979ded3f39a5.r2.cloudflarestorage.com", region: "auto" },
   };
 
   return {
