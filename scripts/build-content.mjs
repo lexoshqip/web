@@ -226,6 +226,9 @@ async function fetchS3Library(id, s3Config) {
     // Step 2: Download images (covers, portraits, banners) via S3 ListObjects
     const IMAGE_EXTS = new Set([".jpg", ".jpeg", ".png", ".webp", ".svg"]);
     const listing = await s3ListObjects(bucket, "", endpoint, region);
+    // Persist the full listing — used later to derive S3-proxy format URLs for
+    // books whose binaries are not present locally (Cloudflare CI builds).
+    fs.writeFileSync(path.join(cacheDir, "objects.json"), JSON.stringify(listing));
     const imageKeys = listing.filter((k) => {
       const ext = path.extname(k).toLowerCase();
       return IMAGE_EXTS.has(ext);
@@ -705,6 +708,29 @@ for (const [root, s3] of S3_CONFIGS.entries()) {
   }
 }
 
+/* Live R2 object index: bookId → content files as they actually exist in the
+   bucket. This is what S3-proxy URLs are derived from, so the build works in
+   Cloudflare CI where the library repos aren't available. */
+const s3ContentIndex = new Map();
+for (const [root, s3] of S3_CONFIGS.entries()) {
+  const meta = libraryMetaMap.get(root);
+  if (!meta || !s3.proxy) continue;
+  if (!s3) continue;
+  const objectsFile = path.join(root, "objects.json");
+  if (!fs.existsSync(objectsFile)) continue;
+  let keys = [];
+  try { keys = JSON.parse(fs.readFileSync(objectsFile, "utf8")); } catch { continue; }
+  for (const key of keys) {
+    const m = key.match(/^authors\/([^/]+)\/books\/([^/]+)\/(.+)$/);
+    if (!m) continue;
+    const bookId = `${m[1]}--${m[2]}`;
+    let entry = s3ContentIndex.get(bookId);
+    if (!entry) { entry = { bucket: s3.bucket, bucketName: meta.id, files: [] }; s3ContentIndex.set(bookId, entry); }
+    entry.files.push(m[3]);
+  }
+}
+for (const entry of s3ContentIndex.values()) entry.files.sort();
+
 for (const b of verifiedBooks) {
   const bdir = b._dir;
   if (b.availability === "metadata-only") continue;
@@ -1162,7 +1188,7 @@ for (const book of verifiedBooks) {
         if (volFiles.length > 0) {
           const volumes = [];
           for (let i = 0; i < volFiles.length; i++) {
-            const vname = `vol${i + 1}.pdf`;
+            const vname = volFiles[i]; /* keep original name (book_vol1.pdf) so the S3 key matches R2 */
             fs.copyFileSync(path.join(volSrcDir, volFiles[i]), path.join(bdir, vname));
             volumes.push({
               id: `vol${i + 1}`,
@@ -1366,6 +1392,39 @@ for (const book of verifiedBooks) {
       label: "M4B · gjithë libri në një skedar",
       url: `/content/books/${book.id}/audiobook.m4b`,
     });
+  }
+
+  /* ── S3-backed formats: when binaries aren't available on disk (Cloudflare
+        CI has no library repos), publish the formats the live R2 bucket lists. ── */
+  if (isS3Proxy && !isMetadataOnly) {
+    const idx = s3ContentIndex.get(book.id);
+    if (idx) {
+      const bid = book.id.split("--")[1];
+      const vurl = (name) =>
+        `/api/s3-proxy/${encodeURIComponent(idx.bucket)}/content/authors/${book.authorId}/books/${bid}/${name}`;
+      const present = new Set(idx.files);
+      if (!formats.pdf && present.has("book.pdf")) formats.pdf = vurl("book.pdf");
+      if (!formats.epub && present.has("book.epub")) formats.epub = vurl("book.epub");
+      if (!formats.audio && present.has("book.mp3")) formats.audio = vurl("book.mp3");
+      if (!formats.audioZip && present.has("audiobook.zip")) formats.audioZip = vurl("audiobook.zip");
+      const vols = idx.files.filter((f) => /^book_vol\d+\.(pdf|epub)$/i.test(f));
+      if (vols.length && !formats.volumes) {
+        formats.volumes = vols.map((f, i) => ({
+          id: `vol${i + 1}`,
+          label: `Volumi ${i + 1}`,
+          url: vurl(f),
+        }));
+      }
+      for (const f of book.files ?? []) {
+        const bn = path.basename(f.path);
+        if (!present.has(bn)) continue;
+        const url = vurl(bn);
+        if (f.format === "audio" && !formats.audio) formats.audio = url;
+        else if (f.format === "audio-zip" && !formats.audioZip) formats.audioZip = url;
+        else if (f.format === "epub" && !formats.epub) formats.epub = url;
+        else if (f.format === "pdf" && !formats.pdf) formats.pdf = url;
+      }
+    }
   }
 
   /* ── hints: media files that exist but won't be published ── */

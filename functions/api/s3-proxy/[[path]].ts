@@ -95,9 +95,16 @@ async function s3Sign(
   const kService = await hmacKey(kRegion, "s3");
   const kSigning = await hmacKey(kService, "aws4_request");
 
+  const signingKey = await crypto.subtle.importKey(
+    "raw",
+    kSigning,
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
   const signatureBuf = await crypto.subtle.sign(
     "HMAC",
-    kSigning,
+    signingKey,
     new TextEncoder().encode(stringToSign),
   );
   const signature = [...new Uint8Array(signatureBuf)]
