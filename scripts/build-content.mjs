@@ -736,15 +736,14 @@ for (const b of verifiedBooks) {
   if (b.availability === "metadata-only") continue;
   if (s3LibraryIds.has(b._libraryId)) continue; // S3 content served at runtime
   /* scan-first workflow: a full-text master is only required when nothing
-     else provides content (book.epub/pdf/mp3, volumes, or explicit files[]) */
+     else provides content (book.epub/pdf/mp3 or explicit files[]) */
   const textFile = path.join(bdir, b.accessType === "trial" ? "excerpt.md" : "text.md");
   if (!fs.existsSync(textFile)) {
     const hasPremade =
       ["epub", "pdf", "mp3"].some((ext) => fs.existsSync(path.join(bdir, `book.${ext}`))) ||
-      (b.files ?? []).length > 0 ||
-      (fs.existsSync(bdir) && fs.readdirSync(bdir).some((f) => /^book_vol\d+\.pdf$/i.test(f)));
+      (b.files ?? []).length > 0;
     if (!hasPremade)
-      fail(`book "${b.id}": no content — expected ${path.relative(bdir, textFile)} (or book.epub/pdf/mp3, volumes, files[])`);
+      fail(`book "${b.id}": no content — expected ${path.relative(bdir, textFile)} (or book.epub/pdf/mp3, files[])`);
   }
 }
 
