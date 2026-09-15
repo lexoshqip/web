@@ -3,38 +3,20 @@
     {
       "id": "arka",
       "label": "Arka",
-      "path": "../arka",
-      "enabled": true,
-      "s3": {
-        "bucket": "lexoshqip-arka",
-        "endpoint": "d21ad56e2547c39c7d5d979ded3f39a5.r2.cloudflarestorage.com",
-        "region": "auto",
-        "proxy": true
-      }
+      "path": "arka",
+      "enabled": true
     },
     {
       "id": "agim",
       "label": "Agim",
-      "path": "../agim",
-      "enabled": true,
-      "s3": {
-        "bucket": "lexoshqip-agim",
-        "endpoint": "d21ad56e2547c39c7d5d979ded3f39a5.r2.cloudflarestorage.com",
-        "region": "auto",
-        "proxy": true
-      }
+      "path": "agim",
+      "enabled": true
     },
     {
       "id": "lira",
       "label": "Lira",
-      "path": "../lira",
-      "enabled": true,
-      "s3": {
-        "bucket": "lexoshqip-lira",
-        "endpoint": "d21ad56e2547c39c7d5d979ded3f39a5.r2.cloudflarestorage.com",
-        "region": "auto",
-        "proxy": true
-      }
+      "path": "lira",
+      "enabled": true
     }
   ]
 }
