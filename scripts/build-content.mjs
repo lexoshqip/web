@@ -1407,6 +1407,8 @@ for (const book of verifiedBooks) {
       if (!formats.epub && present.has("book.epub")) formats.epub = vurl("book.epub");
       if (!formats.audio && present.has("book.mp3")) formats.audio = vurl("book.mp3");
       if (!formats.audioZip && present.has("audiobook.zip")) formats.audioZip = vurl("audiobook.zip");
+      const masterRel = book.accessType === "trial" ? "excerpt.md" : "text.md";
+      if (!formats.md && present.has(masterRel)) formats.md = vurl(masterRel);
       const vols = idx.files.filter((f) => /^book_vol\d+\.(pdf|epub)$/i.test(f));
       if (vols.length && !formats.volumes) {
         formats.volumes = vols.map((f, i) => ({
@@ -1423,6 +1425,7 @@ for (const book of verifiedBooks) {
         else if (f.format === "audio-zip" && !formats.audioZip) formats.audioZip = url;
         else if (f.format === "epub" && !formats.epub) formats.epub = url;
         else if (f.format === "pdf" && !formats.pdf) formats.pdf = url;
+        else if (f.format === "md" && !formats.md) formats.md = url;
       }
     }
   }
